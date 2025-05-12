@@ -44,6 +44,7 @@ Options:
   --outpath OUTPATH, -o OUTPATH
                          Where to download to. Path will be made if it doesn't already exist.
   --help, -h             display this help and exit
+  -i, --ImageOnly        Download album image only
 ```
 
 ## Thank you
