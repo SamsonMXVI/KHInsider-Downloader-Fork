@@ -2,10 +2,8 @@ name: Build and Release
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "v*" # Only release on version tags like v1.0.0
+      - "v*" # Only run when a version tag like v1.0.0 is pushed
 
 jobs:
   build:
