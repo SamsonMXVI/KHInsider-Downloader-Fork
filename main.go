@@ -5,39 +5,39 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
-	"io"
-	"net/url"
-	"strconv"
 
 	"main/jsbeautifier"
-	
+
+	"github.com/PuerkitoBio/goquery"
 	"github.com/alexflint/go-arg"
 	"github.com/dustin/go-humanize"
-	"github.com/PuerkitoBio/goquery"
 )
 
 const (
-	userAgent 			= "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi"+
+	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi" +
 		"t/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
-	tracksArrayRegexStr = `tracks=(\[(?:{"track":\d+,"name":"(?:[^"]+|)","le`+
+	tracksArrayRegexStr = `tracks=(\[(?:{"track":\d+,"name":"(?:[^"]+|)","le` +
 		`ngth":"\d+:\d+","file":"[^"]+"},)+])`
-	urlRegexStr 		= `^https://downloads.khinsider.com/game-soundtracks/al`+
+	urlRegexStr = `^https://downloads.khinsider.com/game-soundtracks/al` +
 		`bum/[a-z\d-.]+(?:-[a-z\d-.]+)*$`
-	sanRegexStr 		= `[\/:*?"><|]`
+	sanRegexStr = `[\/:*?"><|]`
 )
 
 var (
-	client 				= &http.Client{Transport: &Transport{}}
+	client              = &http.Client{Transport: &Transport{}}
 	tracksArrayReplacer = strings.NewReplacer(
-		`\'\'`, `\"`, `\'`,  "'", "&#8203;", "")
+		`\'\'`, `\"`, `\'`, "'", "&#8203;", "")
 )
 
 var supportedFmts = []string{
@@ -52,10 +52,10 @@ var resolveFmt = map[int]string{
 }
 
 var fmtFallback = map[string]string{
-	"FLAC":  "M4A",
-	"M4A": "FLAC",
-	"OGG": "MP3",
-	"MP3": "OGG",
+	"FLAC": "M4A",
+	"M4A":  "FLAC",
+	"OGG":  "MP3",
+	"MP3":  "OGG",
 }
 
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -207,6 +207,7 @@ func parseCfg() (*Config, error) {
 		fmt.Println("Failed to process URLs.")
 		return nil, err
 	}
+	cfg.ImageOnly = args.ImageOnly
 	return cfg, nil
 }
 
@@ -266,7 +267,6 @@ func filterFmts(fmts []string) []string {
 	return filtered
 }
 
-
 func getFname(file string) (string, error) {
 	lastIdx := strings.LastIndex(file, "/")
 	dec, err := url.QueryUnescape(file[lastIdx+1:])
@@ -276,7 +276,6 @@ func getFname(file string) (string, error) {
 	lastIdx = strings.LastIndex(dec, ".")
 	return sanitise(dec[:lastIdx+1]), nil
 }
-
 func extractMeta(_url string) (*Meta, error) {
 	doc, err := getDocument(_url)
 	if err != nil {
@@ -284,34 +283,51 @@ func extractMeta(_url string) (*Meta, error) {
 	}
 
 	pageContent := doc.Find(`div[id="pageContent"]`).First()
-	// Get this meta from the code instead of the table so wo don't have
-	// to follow each row link for the other formats.
+
+	// Extract album image URLs
+	var images []string
+	pageContent.Find("div.albumImage a").Each(func(_ int, s *goquery.Selection) {
+		if href, ok := s.Attr("href"); ok {
+			images = append(images, href)
+		}
+	})
+
+	// Get tracks metadata from embedded script
 	options := jsbeautifier.DefaultOptions()
 	code := pageContent.Find("script").First().Text()
-	// Also unpacks so the code and meta's not garbled. The code doesn't get executed.
 	unpackedCode, err := jsbeautifier.BeautifyString(code, options)
 	if err != nil {
 		return nil, err
 	}
+
 	regex := regexp.MustCompile(tracksArrayRegexStr)
 	match := regex.FindStringSubmatch(*unpackedCode)
+	if len(match) < 2 {
+		return nil, errors.New("failed to locate tracks array in script")
+	}
+
 	tracksArrayStr := tracksArrayReplacer.Replace(match[1])
+	// Ensure valid JSON array closing
 	tracksArrayStr = tracksArrayStr[:len(tracksArrayStr)-2] + "]"
+
 	var tracks []*Track
-	err = json.Unmarshal([]byte(tracksArrayStr), &tracks)
-	if err != nil {
+	if err := json.Unmarshal([]byte(tracksArrayStr), &tracks); err != nil {
 		return nil, err
 	}
 
 	var meta Meta
+	meta.Title = pageContent.Find("h2").First().Text()
 	meta.Tracks = tracks
-	//fmt.Println(meta.Formats)
+	meta.AlbumImages = images
+
+	// Populate track file info and disk numbers
 	var diskNum int
 	for i, track := range meta.Tracks {
 		if track.Track == 1 {
-			diskNum ++
+			diskNum++
 		}
 		meta.Tracks[i].DiskNum = diskNum
+
 		fname, err := getFname(track.File)
 		if err != nil {
 			return nil, err
@@ -320,30 +336,24 @@ func extractMeta(_url string) (*Meta, error) {
 			meta.Tracks[i].Name = "Track " + strconv.Itoa(i+1)
 		}
 		meta.Tracks[i].Fname = fname
-		meta.Tracks[i].File = "https://"+ track.File[:len(track.File)-3]
+		// Convert to full URL
+		meta.Tracks[i].File = "https://" + track.File[:len(track.File)-3]
 	}
 	meta.HasDisks = diskNum > 1
 
-	title := pageContent.Find("h2").First().Text()
-	meta.Title = title
+	// Extract supported formats from table header
 	tracklist := pageContent.Find(`table[id="songlist"]`).First()
-	tracklistHeader := tracklist.Find(`tr[id="songlist_header"]`)
+	header := tracklist.Find(`tr[id="songlist_header"]`)
 
 	var formats []string
-	tracklistHeader.Find("th").Each(func(_ int, s *goquery.Selection) {
-		// Row width reliable for formats?
-		width, ok := s.Attr("width")
-		if ok && width == "60px" {
+	header.Find("th").Each(func(_ int, s *goquery.Selection) {
+		if width, ok := s.Attr("width"); ok && width == "60px" {
 			text := s.Text()
 			if contains(supportedFmts, text, false) {
 				formats = append(formats, text)
-			} else {
-				fmt.Println("Filtered unsupported format: " + text)
 			}
-			
 		}
 	})
-
 	if len(formats) == 0 {
 		return nil, errors.New("Formats array is empty.")
 	}
@@ -351,7 +361,6 @@ func extractMeta(_url string) (*Meta, error) {
 
 	return &meta, nil
 }
-
 
 func chooseFmt(formats []string, wantedFmt string) string {
 	origWantedFmt := wantedFmt
@@ -375,7 +384,7 @@ func chooseFmt(formats []string, wantedFmt string) string {
 					wantedFmt = "OGG"
 					continue
 				}
-			}			
+			}
 			wantedFmt = fmtFallback[wantedFmt]
 		}
 	}
@@ -424,8 +433,26 @@ func downloadTrack(trackPath, _url string) error {
 		StartTime: time.Now().UnixMilli(),
 	}
 	_, err = io.Copy(f, io.TeeReader(resp.Body, counter))
-	
+
 	fmt.Println("")
+	return err
+}
+
+// downloadFile fetches content from url and writes it to path
+func downloadFile(path, url string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
 	return err
 }
 
@@ -476,39 +503,66 @@ func main() {
 
 		fmt.Println(meta.Title)
 		trackTotal := len(meta.Tracks)
-		for trackNum, track := range meta.Tracks {
-			trackNum++
-			_albumFolder := albumFolder
-			if meta.HasDisks {
-				_albumFolder = filepath.Join(
-					albumFolder, cfg.DiskNumPrefix + strconv.Itoa(track.DiskNum))
-			} 
-			trackPath := filepath.Join(_albumFolder, track.Fname + lowerChosenFmt)
 
-			exists, err := fileExists(trackPath)
+		// Download audio tracks (check if only download images)
+		if cfg.ImageOnly == false {
+			for i, track := range meta.Tracks {
+				trackNum := i + 1
+				_albumFolder := albumFolder
+				if meta.HasDisks {
+					_albumFolder = filepath.Join(
+						albumFolder, cfg.DiskNumPrefix+strconv.Itoa(track.DiskNum))
+				}
+				trackPath := filepath.Join(_albumFolder, track.Fname+lowerChosenFmt)
+
+				exists, err := fileExists(trackPath)
+				if err != nil {
+					handleErr("failed to check if track already exists locally", err, false)
+					continue
+				}
+				if exists {
+					fmt.Println("Track already exists locally.")
+					continue
+				}
+
+				err = makeDirs(_albumFolder)
+				if err != nil {
+					handleErr("failed to make album output path", err, false)
+					continue
+				}
+
+				fmt.Printf("Downloading track %d of %d: %s - %s\n",
+					trackNum, trackTotal, track.Name, chosenFmt)
+				err = downloadTrack(trackPath, track.File+lowerChosenFmt)
+				if err != nil {
+					handleErr("failed to download track", err, false)
+				}
+			}
+		}
+
+		// Download album images
+		fmt.Println("Downloading album images...")
+		if err := makeDirs(albumFolder); err != nil {
+			handleErr("failed to make album image folder", err, false)
+		}
+		for i, imgURL := range meta.AlbumImages {
+			ext := filepath.Ext(imgURL)
+			imgName := fmt.Sprintf("image_%02d%s", i+1, ext)
+			destPath := filepath.Join(albumFolder, imgName)
+
+			exists, err := fileExists(destPath)
 			if err != nil {
-				handleErr(
-					"failed to check if track already exists locally", err, false)
+				handleErr("failed to check if image already exists", err, false)
 				continue
 			}
 			if exists {
-				fmt.Println("Track already exists locally.")
+				fmt.Printf("Image %s already exists, skipping.\n", imgName)
 				continue
 			}
 
-			err = makeDirs(_albumFolder)
-			if err != nil {
-				handleErr("failed to make album output path", err, false)
-				continue
-			}
-
-			fmt.Printf(
-				"Downloading track %d of %d: %s - %s\n", trackNum, trackTotal, track.Name,
-				chosenFmt,
-			)
-			err = downloadTrack(trackPath, track.File + lowerChosenFmt)
-			if err != nil {
-				handleErr("failed to download track", err, false)
+			fmt.Printf("Downloading image %d of %d: %s\n", i+1, len(meta.AlbumImages), imgName)
+			if err := downloadFile(destPath, imgURL); err != nil {
+				handleErr("failed to download album image", err, false)
 			}
 		}
 	}
