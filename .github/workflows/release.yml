@@ -38,14 +38,15 @@ jobs:
           mkdir -p dist
           EXT=""
           if [ "${GOOS}" = "windows" ]; then EXT=".exe"; fi
-          OUTPUT="app-${GOOS}-${GOARCH}${EXT}"
+          OUTPUT="KHInsider-Downloader-${GOOS}-${GOARCH}${EXT}"
           CGO_ENABLED=0 go build -o dist/$OUTPUT .
 
-      - name: Archive binaries
+      - name: Archive binaries with config.json
         run: |
           cd dist
           for f in *; do
-            zip "${f%.*}.zip" "$f"
+            # Create zip with the binary and config.json
+            zip "${f%.*}.zip" "$f" "../config.json"
             rm "$f"
           done
 
