@@ -1,23 +1,26 @@
 # KHInsider-Downloader
-KHInsider downloader written in Go.    
+
+KHInsider downloader written in Go.  
 Other downloaders already exist, but they're either broken or only support MP3.
 ![](https://i.imgur.com/4IRZAJq.png)
 [Windows, Linux, macOS, and Android binaries](https://github.com/Sorrow446/KHInsider-Downloader/releases)
 
 ## Setup
-|Option|Info|
-| --- | --- |
-|format|Track download quality. 1 = MP3, 2 = Opus, 3 = AAC/ALAC, 4 = best available / FLAC.
-|outPath|Where to download to. Path will be made if it doesn't already exist.
-|diskNumPrefix|Prefix for disk folders. Ex: `Disk `, `CD `.
+
+| Option        | Info                                                                                |
+| ------------- | ----------------------------------------------------------------------------------- |
+| format        | Track download quality. 1 = MP3, 2 = Opus, 3 = AAC/ALAC, 4 = best available / FLAC. |
+| outPath       | Where to download to. Path will be made if it doesn't already exist.                |
+| diskNumPrefix | Prefix for disk folders. Ex: `Disk `, `CD `.                                        |
 
 ## Usage
+
 Args take priority over the config file.
 
-Download a single album:   
+Download a single album:  
 `khi_dl_x64.exe https://downloads.khinsider.com/game-soundtracks/album/deadly-arts-g.a.s.p.-n64`
 
-Download two albums and from two text files:   
+Download two albums and from two text files:  
 `khi_dl_x64.exe https://downloads.khinsider.com/game-soundtracks/album/deadly-arts-g.a.s.p.-n64 https://downloads.khinsider.com/game-soundtracks/album/super-mario-galaxy-2 G:\1.txt G:\2.txt`
 
 ```
@@ -41,12 +44,24 @@ Options:
   --outpath OUTPATH, -o OUTPATH
                          Where to download to. Path will be made if it doesn't already exist.
   --help, -h             display this help and exit
-  ```
-  
-  ## Thank you
-  KHInsider Downloader uses a modified version of ditashi's jsbeautifier-go.
-  
-  ## Disclaimer
-- I will not be responsible for how you use KHInsider Downloader.    
-- KHInsider brand and name is the registered trademark of its respective owner.    
+```
+
+## Thank you
+
+KHInsider Downloader uses a modified version of ditashi's jsbeautifier-go.
+
+## Disclaimer
+
+- I will not be responsible for how you use KHInsider Downloader.
+- KHInsider brand and name is the registered trademark of its respective owner.
 - KHInsider Downloader has no partnership, sponsorship or endorsement with KHInsider.
+
+## 📦 Changelog
+
+#### 🚀 Features
+
+- **GitHub Actions Auto Build**
+  Added CI workflow that automatically builds binaries for major platforms (Linux, Windows, macOS) on every push to the `main` branch and releases binaries on new version tags.
+
+- **Image Download Support**
+  Added `-i` / `--ImageOnly` flag to support downloading only album/track cover images without downloading audio files.
